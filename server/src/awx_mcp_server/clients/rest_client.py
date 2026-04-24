@@ -897,6 +897,43 @@ class RestAWXClient(AWXClient):
         """Cancel running workflow job."""
         return await self._request("POST", f"/api/v2/workflow_jobs/{job_id}/cancel/")
 
+    async def delete_workflow_job(self, job_id: int) -> None:
+        """Delete workflow job."""
+        await self.client.request("DELETE", f"/api/v2/workflow_jobs/{job_id}/")
+
+    async def relaunch_workflow_job(self, job_id: int) -> WorkflowJob:
+        """Relaunch a workflow job."""
+        data = await self._request("POST", f"/api/v2/workflow_jobs/{job_id}/relaunch/")
+        return self._parse_workflow_job(data)
+
+    async def get_workflow_job_template_nodes(
+        self, template_id: int, page: int = 1, page_size: int = 100
+    ) -> list[dict[str, Any]]:
+        """Get workflow job template node definitions (the template graph)."""
+        params = {"page": page, "page_size": page_size}
+        data = await self._request(
+            "GET", f"/api/v2/workflow_job_templates/{template_id}/workflow_nodes/", params=params
+        )
+        return data.get("results", [])
+
+    async def get_workflow_job_template_survey(self, template_id: int) -> dict[str, Any]:
+        """Get workflow job template survey spec."""
+        return await self._request("GET", f"/api/v2/workflow_job_templates/{template_id}/survey_spec/")
+
+    async def list_workflow_job_template_schedules(
+        self, template_id: int, page: int = 1, page_size: int = 25
+    ) -> list[dict[str, Any]]:
+        """List schedules for a workflow job template."""
+        params = {"page": page, "page_size": page_size}
+        data = await self._request(
+            "GET", f"/api/v2/workflow_job_templates/{template_id}/schedules/", params=params
+        )
+        return data.get("results", [])
+
+    async def get_workflow_job_template_launch_config(self, template_id: int) -> dict[str, Any]:
+        """Get workflow job template launch configuration (what can be prompted)."""
+        return await self._request("GET", f"/api/v2/workflow_job_templates/{template_id}/launch/")
+
     async def get_workflow_job_nodes(
         self, job_id: int, page: int = 1, page_size: int = 100
     ) -> list[WorkflowJobNode]:

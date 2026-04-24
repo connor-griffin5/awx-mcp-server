@@ -676,6 +676,76 @@ def create_mcp_server(tenant_id: Optional[str] = None) -> Server:
                 "required": ["job_id"],
             },
         ),
+        Tool(
+            name="awx_workflow_job_delete",
+            description="Delete an AWX workflow job record from history.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "number", "description": "Workflow job ID to delete"},
+                },
+                "required": ["job_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_job_relaunch",
+            description="Relaunch/rerun a previous AWX workflow job execution. Creates a new workflow job from the same template with the same parameters.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "number", "description": "Workflow job ID to relaunch"},
+                },
+                "required": ["job_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_template_nodes",
+            description="Get the workflow job template node definitions — the graph of steps that make up the workflow template. Shows which job templates/projects/inventory sources are chained together and how (success/failure/always paths).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "template_id": {"type": "number", "description": "Workflow job template ID"},
+                    "page": {"type": "number", "description": "Page number (default: 1)"},
+                    "page_size": {"type": "number", "description": "Page size (default: 100)"},
+                },
+                "required": ["template_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_template_survey",
+            description="Get the survey spec for a workflow job template. Shows survey questions that are prompted when launching the workflow.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "template_id": {"type": "number", "description": "Workflow job template ID"},
+                },
+                "required": ["template_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_template_schedules",
+            description="List schedules configured for a workflow job template. Shows when the workflow is set to run automatically.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "template_id": {"type": "number", "description": "Workflow job template ID"},
+                    "page": {"type": "number", "description": "Page number (default: 1)"},
+                    "page_size": {"type": "number", "description": "Page size (default: 25)"},
+                },
+                "required": ["template_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_template_launch_config",
+            description="Get the launch configuration for a workflow job template. Shows which fields can be prompted on launch (inventory, limit, variables, etc.) and their defaults.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "template_id": {"type": "number", "description": "Workflow job template ID"},
+                },
+                "required": ["template_id"],
+            },
+        ),
         # ── Local Ansible Development Tools ──
         Tool(
             name="create_playbook",
@@ -1699,6 +1769,151 @@ def create_mcp_server(tenant_id: Optional[str] = None) -> Server:
                     if connections:
                         result += f"  Connections: {', '.join(connections)}\n"
                     result += "\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_job_delete":
+                env, client = get_active_client()
+                job_id = arguments["job_id"]
+
+                async with client:
+                    await client.rest_client.delete_workflow_job(job_id)
+
+                return [TextContent(type="text", text=f"Workflow job {job_id} deleted successfully")]
+
+            elif name == "awx_workflow_job_relaunch":
+                env, client = get_active_client()
+                job_id = arguments["job_id"]
+
+                async with client:
+                    wf_job = await client.rest_client.relaunch_workflow_job(job_id)
+
+                result = f"Workflow job relaunched successfully\n\n"
+                result += f"New Workflow Job ID: {wf_job.id}\n"
+                result += f"Name: {wf_job.name}\n"
+                result += f"Status: {wf_job.status.value}\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_template_nodes":
+                env, client = get_active_client()
+                template_id = arguments["template_id"]
+
+                async with client:
+                    nodes = await client.rest_client.get_workflow_job_template_nodes(
+                        template_id,
+                        page=arguments.get("page", 1),
+                        page_size=arguments.get("page_size", 100),
+                    )
+
+                result = f"Workflow Template {template_id} Nodes ({len(nodes)}):\n\n"
+                for node in nodes:
+                    sf = node.get("summary_fields", {})
+                    ujt = sf.get("unified_job_template", {})
+                    template_name = ujt.get("name", "Unknown")
+                    job_type = ujt.get("unified_job_type", "unknown")
+
+                    result += f"Node {node['id']}: {template_name} ({job_type})\n"
+                    connections = []
+                    if node.get("success_nodes"):
+                        connections.append(f"success -> {node['success_nodes']}")
+                    if node.get("failure_nodes"):
+                        connections.append(f"failure -> {node['failure_nodes']}")
+                    if node.get("always_nodes"):
+                        connections.append(f"always -> {node['always_nodes']}")
+                    if connections:
+                        result += f"  Connections: {', '.join(connections)}\n"
+                    if node.get("all_parents_must_converge"):
+                        result += f"  All parents must converge: True\n"
+                    result += "\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_template_survey":
+                env, client = get_active_client()
+                template_id = arguments["template_id"]
+
+                async with client:
+                    survey = await client.rest_client.get_workflow_job_template_survey(template_id)
+
+                spec = survey.get("spec", [])
+                if not spec:
+                    result = f"Workflow Template {template_id} has no survey questions configured.\n"
+                else:
+                    result = f"Workflow Template {template_id} Survey ({len(spec)} questions):\n\n"
+                    if survey.get("name"):
+                        result += f"Name: {survey['name']}\n"
+                    if survey.get("description"):
+                        result += f"Description: {survey['description']}\n"
+                    result += "\n"
+                    for q in spec:
+                        required = " (required)" if q.get("required") else ""
+                        result += f"Variable: {q.get('variable')}{required}\n"
+                        result += f"  Question: {q.get('question_name', '')}\n"
+                        result += f"  Type: {q.get('type', 'text')}\n"
+                        if q.get("default"):
+                            result += f"  Default: {q['default']}\n"
+                        if q.get("choices"):
+                            result += f"  Choices: {q['choices']}\n"
+                        result += "\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_template_schedules":
+                env, client = get_active_client()
+                template_id = arguments["template_id"]
+
+                async with client:
+                    schedules = await client.rest_client.list_workflow_job_template_schedules(
+                        template_id,
+                        page=arguments.get("page", 1),
+                        page_size=arguments.get("page_size", 25),
+                    )
+
+                result = f"Workflow Template {template_id} Schedules ({len(schedules)}):\n\n"
+                for s in schedules:
+                    result += f"ID: {s['id']} - {s['name']}\n"
+                    if s.get("description"):
+                        result += f"  Description: {s['description']}\n"
+                    result += f"  Enabled: {s.get('enabled', False)}\n"
+                    result += f"  RRule: {s.get('rrule', 'N/A')}\n"
+                    if s.get("next_run"):
+                        result += f"  Next Run: {s['next_run']}\n"
+                    if s.get("dtstart"):
+                        result += f"  Start: {s['dtstart']}\n"
+                    result += "\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_template_launch_config":
+                env, client = get_active_client()
+                template_id = arguments["template_id"]
+
+                async with client:
+                    config = await client.rest_client.get_workflow_job_template_launch_config(template_id)
+
+                result = f"Workflow Template {template_id} Launch Configuration:\n\n"
+                result += f"Can Start Without User Input: {config.get('can_start_without_user_input', False)}\n"
+                result += f"Survey Enabled: {config.get('survey_enabled', False)}\n"
+                result += f"Variables Needed: {config.get('variables_needed_to_start', [])}\n\n"
+
+                result += "Prompt Options:\n"
+                for key in ['ask_inventory_on_launch', 'ask_limit_on_launch', 'ask_scm_branch_on_launch',
+                            'ask_variables_on_launch', 'ask_labels_on_launch', 'ask_tags_on_launch',
+                            'ask_skip_tags_on_launch']:
+                    if config.get(key):
+                        result += f"  {key}: True\n"
+
+                defaults = config.get("defaults", {})
+                if defaults:
+                    result += f"\nDefaults:\n"
+                    for key, value in defaults.items():
+                        if value is not None:
+                            result += f"  {key}: {value}\n"
+
+                missing = config.get("node_templates_missing", [])
+                if missing:
+                    result += f"\nMissing Node Templates: {missing}\n"
 
                 return [TextContent(type="text", text=result)]
 
