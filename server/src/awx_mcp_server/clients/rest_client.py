@@ -20,6 +20,9 @@ from awx_mcp_server.domain import (
     JobStatus,
     JobTemplate,
     Project,
+    WorkflowJob,
+    WorkflowJobNode,
+    WorkflowJobTemplate,
 )
 
 
@@ -722,19 +725,19 @@ class RestAWXClient(AWXClient):
         """Parse job from API response."""
         started = None
         finished = None
-        
+
         if data.get("started"):
             try:
                 started = datetime.fromisoformat(data["started"].replace("Z", "+00:00"))
             except Exception:
                 pass
-        
+
         if data.get("finished"):
             try:
                 finished = datetime.fromisoformat(data["finished"].replace("Z", "+00:00"))
             except Exception:
                 pass
-        
+
         # Parse extra_vars - handle both dict and string formats
         extra_vars = data.get("extra_vars", {})
         if isinstance(extra_vars, str):
@@ -743,7 +746,7 @@ class RestAWXClient(AWXClient):
                 extra_vars = json.loads(extra_vars) if extra_vars else {}
             except (json.JSONDecodeError, ValueError):
                 extra_vars = {}
-        
+
         return Job(
             id=data["id"],
             name=data["name"],
@@ -758,3 +761,148 @@ class RestAWXClient(AWXClient):
             elapsed=data.get("elapsed"),
             artifacts=data.get("artifacts", {}),
         )
+
+    # ── Workflow Job Templates ──
+
+    def _parse_datetime(self, value: Any) -> Optional[datetime]:
+        """Parse datetime string from API response."""
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    def _parse_workflow_job_template(self, data: dict[str, Any]) -> WorkflowJobTemplate:
+        """Parse workflow job template from API response."""
+        return WorkflowJobTemplate(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description"),
+            organization=data.get("organization"),
+            inventory=data.get("inventory"),
+            limit=data.get("limit"),
+            extra_vars=self._parse_extra_vars(data.get("extra_vars", {})),
+            survey_enabled=data.get("survey_enabled", False),
+            allow_simultaneous=data.get("allow_simultaneous", False),
+            ask_variables_on_launch=data.get("ask_variables_on_launch", False),
+            ask_inventory_on_launch=data.get("ask_inventory_on_launch", False),
+            ask_limit_on_launch=data.get("ask_limit_on_launch", False),
+            ask_tags_on_launch=data.get("ask_tags_on_launch", False),
+            ask_skip_tags_on_launch=data.get("ask_skip_tags_on_launch", False),
+            status=data.get("status"),
+            last_job_run=self._parse_datetime(data.get("last_job_run")),
+            next_job_run=self._parse_datetime(data.get("next_job_run")),
+        )
+
+    def _parse_workflow_job(self, data: dict[str, Any]) -> WorkflowJob:
+        """Parse workflow job from API response."""
+        return WorkflowJob(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description"),
+            status=JobStatus(data["status"]),
+            workflow_job_template=data.get("workflow_job_template"),
+            inventory=data.get("inventory"),
+            limit=data.get("limit"),
+            extra_vars=self._parse_extra_vars(data.get("extra_vars", {})),
+            started=self._parse_datetime(data.get("started")),
+            finished=self._parse_datetime(data.get("finished")),
+            elapsed=data.get("elapsed"),
+            failed=data.get("failed", False),
+            launch_type=data.get("launch_type"),
+            job_explanation=data.get("job_explanation"),
+        )
+
+    def _parse_workflow_job_node(self, data: dict[str, Any]) -> WorkflowJobNode:
+        """Parse workflow job node from API response."""
+        return WorkflowJobNode(
+            id=data["id"],
+            job=data.get("job"),
+            workflow_job=data["workflow_job"],
+            unified_job_template=data.get("unified_job_template"),
+            identifier=data.get("identifier"),
+            do_not_run=data.get("do_not_run", False),
+            success_nodes=data.get("success_nodes", []),
+            failure_nodes=data.get("failure_nodes", []),
+            always_nodes=data.get("always_nodes", []),
+            all_parents_must_converge=data.get("all_parents_must_converge", False),
+            summary_fields=data.get("summary_fields", {}),
+        )
+
+    async def list_workflow_job_templates(
+        self, name_filter: Optional[str] = None, page: int = 1, page_size: int = 25
+    ) -> list[WorkflowJobTemplate]:
+        """List workflow job templates."""
+        params = {"page": page, "page_size": page_size}
+        if name_filter:
+            params["name__icontains"] = name_filter
+
+        data = await self._request("GET", "/api/v2/workflow_job_templates/", params=params)
+        return [self._parse_workflow_job_template(item) for item in data.get("results", [])]
+
+    async def get_workflow_job_template(self, template_id: int) -> WorkflowJobTemplate:
+        """Get workflow job template by ID."""
+        data = await self._request("GET", f"/api/v2/workflow_job_templates/{template_id}/")
+        return self._parse_workflow_job_template(data)
+
+    async def launch_workflow_job(
+        self,
+        template_id: int,
+        extra_vars: Optional[dict[str, Any]] = None,
+        limit: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+        skip_tags: Optional[list[str]] = None,
+    ) -> WorkflowJob:
+        """Launch workflow job from template."""
+        payload: dict[str, Any] = {}
+
+        if extra_vars:
+            payload["extra_vars"] = extra_vars
+        if limit:
+            payload["limit"] = limit
+        if tags:
+            payload["job_tags"] = ",".join(tags)
+        if skip_tags:
+            payload["skip_tags"] = ",".join(skip_tags)
+
+        data = await self._request(
+            "POST", f"/api/v2/workflow_job_templates/{template_id}/launch/", json=payload
+        )
+        return self._parse_workflow_job(data)
+
+    async def get_workflow_job(self, job_id: int) -> WorkflowJob:
+        """Get workflow job by ID."""
+        data = await self._request("GET", f"/api/v2/workflow_jobs/{job_id}/")
+        return self._parse_workflow_job(data)
+
+    async def list_workflow_jobs(
+        self,
+        status: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 25,
+        workflow_template_id: Optional[int] = None,
+    ) -> list[WorkflowJob]:
+        """List workflow jobs."""
+        params = {"page": page, "page_size": page_size, "order_by": "-id"}
+        if status:
+            params["status"] = status
+        if workflow_template_id:
+            params["workflow_job_template"] = workflow_template_id
+
+        data = await self._request("GET", "/api/v2/workflow_jobs/", params=params)
+        return [self._parse_workflow_job(item) for item in data.get("results", [])]
+
+    async def cancel_workflow_job(self, job_id: int) -> dict[str, Any]:
+        """Cancel running workflow job."""
+        return await self._request("POST", f"/api/v2/workflow_jobs/{job_id}/cancel/")
+
+    async def get_workflow_job_nodes(
+        self, job_id: int, page: int = 1, page_size: int = 100
+    ) -> list[WorkflowJobNode]:
+        """Get workflow job nodes."""
+        params = {"page": page, "page_size": page_size}
+        data = await self._request(
+            "GET", f"/api/v2/workflow_jobs/{job_id}/workflow_nodes/", params=params
+        )
+        return [self._parse_workflow_job_node(item) for item in data.get("results", [])]

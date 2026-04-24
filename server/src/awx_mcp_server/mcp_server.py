@@ -581,6 +581,101 @@ def create_mcp_server(tenant_id: Optional[str] = None) -> Server:
                 "required": ["job_id"],
             },
         ),
+        # ── Workflow Job Templates ──
+        Tool(
+            name="awx_workflow_templates_list",
+            description="List AWX workflow job templates. Workflow templates define multi-step automation pipelines that chain multiple job templates together. Use this when user asks to 'list workflows', 'show workflow templates', 'what workflows exist'.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filter": {"type": "string", "description": "Filter workflow templates by name"},
+                    "page": {"type": "number", "description": "Page number (default: 1)"},
+                    "page_size": {"type": "number", "description": "Page size (default: 25)"},
+                },
+            },
+        ),
+        Tool(
+            name="awx_workflow_template_get",
+            description="Get details of a specific AWX workflow job template by ID, including its configuration, launch options, schedule info, and status.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "template_id": {"type": "number", "description": "Workflow job template ID"},
+                },
+                "required": ["template_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_job_launch",
+            description="Launch/execute/run a workflow job from a workflow job template. Creates a new workflow job that orchestrates multiple steps.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "template_id": {"type": "number", "description": "Workflow job template ID to execute"},
+                    "extra_vars": {"type": "object", "description": "Extra variables (JSON) to pass to the workflow"},
+                    "limit": {"type": "string", "description": "Limit execution to specific hosts"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Job tags to apply",
+                    },
+                    "skip_tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Job tags to skip",
+                    },
+                },
+                "required": ["template_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_job_get",
+            description="Get status and details of a specific AWX workflow job execution, including timing, launch type, and failure explanation.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "number", "description": "Workflow job ID"},
+                },
+                "required": ["job_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_jobs_list",
+            description="List recent AWX workflow job executions and their statuses. Use this to see workflow run history.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "description": "Filter by status (successful, failed, running, etc.)"},
+                    "workflow_template_id": {"type": "number", "description": "Filter by workflow job template ID"},
+                    "page": {"type": "number", "description": "Page number (default: 1)"},
+                    "page_size": {"type": "number", "description": "Page size (default: 25)"},
+                },
+            },
+        ),
+        Tool(
+            name="awx_workflow_job_cancel",
+            description="Cancel/stop a running AWX workflow job execution.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "number", "description": "Workflow job ID to cancel"},
+                },
+                "required": ["job_id"],
+            },
+        ),
+        Tool(
+            name="awx_workflow_job_nodes",
+            description="Get the individual step/node details of an AWX workflow job execution. Shows each node's job template, status, elapsed time, and connection graph (success/failure/always paths). Use this to see which steps passed or failed in a workflow run.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "number", "description": "Workflow job ID"},
+                    "page": {"type": "number", "description": "Page number (default: 1)"},
+                    "page_size": {"type": "number", "description": "Page size (default: 100)"},
+                },
+                "required": ["job_id"],
+            },
+        ),
         # ── Local Ansible Development Tools ──
         Tool(
             name="create_playbook",
@@ -1410,8 +1505,205 @@ def create_mcp_server(tenant_id: Optional[str] = None) -> Server:
                 
                 return [TextContent(type="text", text=result)]
             
+            # ── Workflow Job Template Handlers ──
+
+            elif name == "awx_workflow_templates_list":
+                env, client = get_active_client()
+                async with client:
+                    templates = await client.list_workflow_job_templates(
+                        name_filter=arguments.get("filter"),
+                        page=arguments.get("page", 1),
+                        page_size=arguments.get("page_size", 25),
+                    )
+
+                result = f"Workflow Job Templates ({len(templates)}):\n\n"
+                for tmpl in templates:
+                    result += f"ID: {tmpl.id} - {tmpl.name}\n"
+                    if tmpl.description:
+                        result += f"  Description: {tmpl.description}\n"
+                    if tmpl.status:
+                        result += f"  Status: {tmpl.status}\n"
+                    if tmpl.last_job_run:
+                        result += f"  Last Run: {tmpl.last_job_run.isoformat()}\n"
+                    if tmpl.next_job_run:
+                        result += f"  Next Run: {tmpl.next_job_run.isoformat()}\n"
+                    result += "\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_template_get":
+                env, client = get_active_client()
+                template_id = arguments["template_id"]
+
+                async with client:
+                    tmpl = await client.get_workflow_job_template(template_id)
+
+                result = f"Workflow Job Template {template_id}:\n\n"
+                result += f"Name: {tmpl.name}\n"
+                if tmpl.description:
+                    result += f"Description: {tmpl.description}\n"
+                if tmpl.organization:
+                    result += f"Organization: {tmpl.organization}\n"
+                if tmpl.inventory:
+                    result += f"Inventory: {tmpl.inventory}\n"
+                if tmpl.limit:
+                    result += f"Limit: {tmpl.limit}\n"
+                if tmpl.status:
+                    result += f"Status: {tmpl.status}\n"
+                result += f"Survey Enabled: {tmpl.survey_enabled}\n"
+                result += f"Allow Simultaneous: {tmpl.allow_simultaneous}\n"
+                if tmpl.last_job_run:
+                    result += f"Last Run: {tmpl.last_job_run.isoformat()}\n"
+                if tmpl.next_job_run:
+                    result += f"Next Run: {tmpl.next_job_run.isoformat()}\n"
+                result += f"\nLaunch Options:\n"
+                result += f"  Ask Variables: {tmpl.ask_variables_on_launch}\n"
+                result += f"  Ask Inventory: {tmpl.ask_inventory_on_launch}\n"
+                result += f"  Ask Limit: {tmpl.ask_limit_on_launch}\n"
+                result += f"  Ask Tags: {tmpl.ask_tags_on_launch}\n"
+                result += f"  Ask Skip Tags: {tmpl.ask_skip_tags_on_launch}\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_job_launch":
+                env, client = get_active_client()
+                template_id = arguments["template_id"]
+
+                async with client:
+                    tmpl = await client.get_workflow_job_template(template_id)
+                    check_allowlist(env, template_id, tmpl.name)
+
+                    wf_job = await client.launch_workflow_job(
+                        template_id=template_id,
+                        extra_vars=arguments.get("extra_vars"),
+                        limit=arguments.get("limit"),
+                        tags=arguments.get("tags"),
+                        skip_tags=arguments.get("skip_tags"),
+                    )
+
+                logger.info(
+                    "workflow_job_launched",
+                    environment=env.name,
+                    template=tmpl.name,
+                    job_id=wf_job.id,
+                )
+
+                result = f"✓ Workflow job launched successfully\n\n"
+                result += f"Workflow Job ID: {wf_job.id}\n"
+                result += f"Name: {wf_job.name}\n"
+                result += f"Status: {wf_job.status.value}\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_job_get":
+                env, client = get_active_client()
+                job_id = arguments["job_id"]
+
+                async with client:
+                    wf_job = await client.get_workflow_job(job_id)
+
+                result = f"Workflow Job {job_id} Details:\n\n"
+                result += f"Name: {wf_job.name}\n"
+                result += f"Status: {wf_job.status.value}\n"
+                result += f"Failed: {wf_job.failed}\n"
+                if wf_job.workflow_job_template:
+                    result += f"Template ID: {wf_job.workflow_job_template}\n"
+                if wf_job.launch_type:
+                    result += f"Launch Type: {wf_job.launch_type}\n"
+                if wf_job.started:
+                    result += f"Started: {wf_job.started.isoformat()}\n"
+                if wf_job.finished:
+                    result += f"Finished: {wf_job.finished.isoformat()}\n"
+                if wf_job.elapsed:
+                    result += f"Elapsed: {wf_job.elapsed}s\n"
+                if wf_job.limit:
+                    result += f"Limit: {wf_job.limit}\n"
+                if wf_job.job_explanation:
+                    result += f"\nExplanation: {wf_job.job_explanation}\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_jobs_list":
+                env, client = get_active_client()
+
+                async with client:
+                    wf_jobs = await client.list_workflow_jobs(
+                        status=arguments.get("status"),
+                        page=arguments.get("page", 1),
+                        page_size=arguments.get("page_size", 25),
+                        workflow_template_id=arguments.get("workflow_template_id"),
+                    )
+
+                result = f"Workflow Jobs ({len(wf_jobs)}):\n\n"
+                for wf_job in wf_jobs:
+                    result += f"ID: {wf_job.id} - {wf_job.name}\n"
+                    result += f"  Status: {wf_job.status.value}\n"
+                    if wf_job.launch_type:
+                        result += f"  Launch Type: {wf_job.launch_type}\n"
+                    if wf_job.started:
+                        result += f"  Started: {wf_job.started.isoformat()}\n"
+                    if wf_job.finished:
+                        result += f"  Finished: {wf_job.finished.isoformat()}\n"
+                    result += "\n"
+
+                return [TextContent(type="text", text=result)]
+
+            elif name == "awx_workflow_job_cancel":
+                env, client = get_active_client()
+                job_id = arguments["job_id"]
+
+                async with client:
+                    await client.cancel_workflow_job(job_id)
+
+                return [TextContent(type="text", text=f"Workflow job {job_id} cancellation requested")]
+
+            elif name == "awx_workflow_job_nodes":
+                env, client = get_active_client()
+                job_id = arguments["job_id"]
+
+                async with client:
+                    nodes = await client.get_workflow_job_nodes(
+                        job_id=job_id,
+                        page=arguments.get("page", 1),
+                        page_size=arguments.get("page_size", 100),
+                    )
+
+                result = f"Workflow Job {job_id} Nodes ({len(nodes)}):\n\n"
+                for node in nodes:
+                    # Extract names from summary_fields
+                    sf = node.summary_fields
+                    template_name = sf.get("unified_job_template", {}).get("name", "Unknown")
+                    job_type = sf.get("unified_job_template", {}).get("unified_job_type", "unknown")
+                    job_info = sf.get("job", {})
+                    job_status = job_info.get("status", "unknown")
+                    job_failed = job_info.get("failed", False)
+                    job_elapsed = job_info.get("elapsed")
+                    child_job_id = node.job
+
+                    status_icon = "✗" if job_failed else ("✓" if job_status == "successful" else "●")
+                    result += f"{status_icon} Node: {template_name} ({job_type})\n"
+                    if child_job_id:
+                        result += f"  Job ID: {child_job_id} | Status: {job_status}"
+                        if job_elapsed is not None:
+                            result += f" | Elapsed: {job_elapsed}s"
+                        result += "\n"
+                    if node.do_not_run:
+                        result += f"  (skipped)\n"
+                    connections = []
+                    if node.success_nodes:
+                        connections.append(f"success -> {node.success_nodes}")
+                    if node.failure_nodes:
+                        connections.append(f"failure -> {node.failure_nodes}")
+                    if node.always_nodes:
+                        connections.append(f"always -> {node.always_nodes}")
+                    if connections:
+                        result += f"  Connections: {', '.join(connections)}\n"
+                    result += "\n"
+
+                return [TextContent(type="text", text=result)]
+
             # ── Local Ansible Development Tool Handlers ──
-            
+
             elif name == "create_playbook":
                 pb_result = playbook_manager.create_playbook(
                     name=arguments["name"],
