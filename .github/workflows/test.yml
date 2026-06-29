@@ -145,17 +145,20 @@ jobs:
           context: .
           file: ./server/Dockerfile
           push: false
+          load: true
           tags: awx-mcp-server:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
+
       - name: Test Docker image
         run: |
           docker run --rm -d --name awx-mcp-test \
             -e ADMIN_TOKEN=test-token \
+            -p 8000:8000 \
             awx-mcp-server:test
           sleep 10
-          docker exec awx-mcp-test curl -f http://localhost:8000/health
+          # python:3.11-slim has no curl; the image ships httpx, so probe with it.
+          docker exec awx-mcp-test python -c "import httpx,sys; sys.exit(0 if httpx.get('http://localhost:8000/health').status_code==200 else 1)"
           docker stop awx-mcp-test
 
   package-extension:
