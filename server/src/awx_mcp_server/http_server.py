@@ -12,10 +12,10 @@ from fastapi.responses import StreamingResponse, JSONResponse, Response
 from mcp.server import Server
 from pydantic import BaseModel
 
+from prometheus_client import CONTENT_TYPE_LATEST
 from awx_mcp_server.monitoring import (
     monitoring_service,
     RequestTimer,
-    CONTENT_TYPE_LATEST,
 )
 
 # Import local components
