@@ -155,14 +155,27 @@ jobs:
 
       - name: Test Docker image
         run: |
-          docker run --rm -d --name awx-mcp-test \
+          # Don't use --rm: keep the container so we can read logs if it exits.
+          docker run -d --name awx-mcp-test \
             -e ADMIN_TOKEN=test-token \
             -p 8000:8000 \
             awx-mcp-server:test
-          sleep 10
-          # python:3.11-slim has no curl; the image ships httpx, so probe with it.
-          docker exec awx-mcp-test python -c "import httpx,sys; sys.exit(0 if httpx.get('http://localhost:8000/health').status_code==200 else 1)"
-          docker stop awx-mcp-test
+          # Poll /health from the host (curl is present on the runner; the
+          # slim image has neither curl nor a guaranteed startup time). Retry
+          # for up to ~30s instead of a single fixed sleep, which was flaky.
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::health check failed; container logs:"
+            docker logs awx-mcp-test || true
+            docker rm -f awx-mcp-test || true
+            exit 1
+          fi
+          echo "health check passed"
+          docker rm -f awx-mcp-test
 
   package-extension:
     name: Package VS Code Extension
@@ -189,7 +202,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: awx-mcp-extension
-          path: ./vscode-extension/*.vsix
+          path: ./vscode-extension/dist/*.vsix
           retention-days: 30
 
   lint-and-format:
